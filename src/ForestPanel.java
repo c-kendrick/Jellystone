@@ -198,13 +198,6 @@ public class ForestPanel extends JPanel {
             g.setStroke(new BasicStroke(Math.max(1.0f, (float) tileSize() * 0.06f),
                     BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             g.draw(new QuadCurve2D.Double(startX, startY, middleX, middleY, endX, endY));
-            int size = Math.max(1, (int) (tileSize() * 0.10));
-            for (int dot = 0; dot < 2; dot++) {
-                double t = (view.time() * 1.4 + dot * 0.5) % 1.0, opposite = 1.0 - t;
-                double px = opposite * opposite * startX + 2 * opposite * t * middleX + t * t * endX;
-                double py = opposite * opposite * startY + 2 * opposite * t * middleY + t * t * endY;
-                g.fillOval((int) px - size / 2, (int) py - size / 2, size, size);
-            }
         }
     }
     private void drawActors(Graphics2D g) {
@@ -228,22 +221,18 @@ public class ForestPanel extends JPanel {
     private void drawWeather(Graphics2D g) {
         for (WeatherSystem.StormView storm : view.storms()) {
             int centreX = x(storm.col() + 0.5), centreY = y(storm.row() + 0.5);
-            for (int layer = 0; layer < 4; layer++) {
-                double fraction = 1.0 - layer * 0.23;
-                int rx = (int) (storm.radius() * scaleX() * fraction);
-                int ry = (int) (storm.radius() * scaleY() * fraction);
-                g.setColor(new Color(70, 112, 175, 12 + layer * 5));
-                g.fillOval(centreX - rx, centreY - ry, rx * 2, ry * 2);
-            }
-            g.setColor(new Color(153, 204, 245, 145));
-            for (int i = 0; i < 140; i++) {
+            // One simple rain area. The moisture gradient belongs to the model.
+            int rx = (int) (storm.radius() * scaleX());
+            int ry = (int) (storm.radius() * scaleY());
+            g.setColor(new Color(70, 112, 175, 45));
+            g.fillOval(centreX - rx, centreY - ry, rx * 2, ry * 2);
+            // Fixed droplets move with the storm, but do not animate or fall.
+            g.setColor(new Color(153, 204, 245, 170));
+            for (int i = 0; i < 100; i++) {
                 double angle = i * 2.39996;
-                double reach = Math.sqrt((i + 0.5) / 140.0) * storm.radius();
-                double density = WeatherSystem.moistureProfile(reach, storm.radius());
-                if ((i * 0.6180339) % 1.0 > density) continue;
-                double row = storm.row() + Math.sin(angle) * reach + ((view.time() * 2 + i * 0.37) % 1.0 - 0.5) * 0.6;
-                double col = storm.col() + Math.cos(angle) * reach;
-                int dropX = x(col), dropY = y(row);
+                double reach = Math.sqrt((i + 0.5) / 100.0) * storm.radius() * 0.9;
+                int dropX = x(storm.col() + 0.5 + Math.cos(angle) * reach);
+                int dropY = y(storm.row() + 0.5 + Math.sin(angle) * reach);
                 g.drawLine(dropX, dropY, dropX - 1, dropY + Math.max(2, (int) tileSize() / 3));
             }
             int cloudSize = Math.max(16, (int) (tileSize() * 3));
@@ -255,17 +244,17 @@ public class ForestPanel extends JPanel {
         for (WeatherSystem.FlashView flash : view.flashes()) {
             int size = Math.max(16, (int) tileSize() * 5);
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, flash.startedFire() ? 1.0f : 0.75f));
-            g.drawImage(assets.tile("storm-lightning", size, Math.min(8, (int) (flash.age() * 9))),
+            // Display one still bolt briefly, without cycling through frames.
+            g.drawImage(assets.tile("storm-lightning", size, 3),
                     x(flash.position().col() + 0.5) - size / 2, y(flash.position().row() + 0.5) - size, null);
             g.setComposite(AlphaComposite.SrcOver);
         }
         if (view.gust().strength() > 0.0) {
             int size = Math.max(10, (int) tileSize() * 2);
-            int frame = (int) (view.time() * 12) % 12;
             for (int i = 0; i < 18; i++) {
                 double row = positiveMod(i * 13.1 + view.time() * 4 * view.gust().y(), view.world().rows());
                 double col = positiveMod(i * 19.7 + view.time() * 4 * view.gust().x(), view.world().columns());
-                g.drawImage(assets.tile("wind", size, frame), x(col), y(row), null);
+                g.drawImage(assets.tile("wind", size), x(col), y(row), null);
             }
         }
     }
