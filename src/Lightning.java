@@ -6,12 +6,17 @@ import java.util.stream.Collectors;
 
 public class Lightning extends IgnitionSource {
 
-    private final Random random = new Random();
+    private final Random random;
     private final Set<Cell> struckCells = new HashSet<>();
     private Cell lastStruckCell;
 
     public Lightning() {
+        this(new Random());
+    }
+
+    public Lightning(Random random) {
         super(0.8, 0.7);
+        this.random = java.util.Objects.requireNonNull(random, "Random must not be null");
     }
 
     public Cell getLastStruckCell() {
@@ -32,7 +37,25 @@ public class Lightning extends IgnitionSource {
         }
 
         Cell target = candidates.get(random.nextInt(candidates.size()));
+        igniteTarget(target);
+    }
+
+    public void igniteAt(Forest forest, Position position) {
+        Cell[][] grid = forest.getGrid();
+        if (position.row() < 0 || position.row() >= grid.length
+                || position.col() < 0 || position.col() >= grid[position.row()].length) {
+            throw new IllegalArgumentException("Lightning target must be inside the forest");
+        }
+        Cell target = grid[position.row()][position.col()];
+        if (!canIgnite(target)) throw new IllegalStateException("Lightning needs an unburnt living tree");
+        igniteTarget(target);
+    }
+
+    private void igniteTarget(Cell target) {
         target.getTree().ignite(severity);
+        target.setHeat(0.0);
+        target.setRainExposure(0.0);
+        target.protectIgnition(SimulationRules.LIGHTNING_VISIBLE_SECONDS);
         lastStruckCell = target;
         struckCells.add(target);
     }

@@ -105,11 +105,18 @@ public class Tree implements Burnable {
     }
 
     public void advanceBurning() {
+        advanceBurning(SimulationRules.STEP_SECONDS);
+    }
+
+    public void advanceBurning(double seconds) {
+        if (!Double.isFinite(seconds) || seconds < 0.0) {
+            throw new IllegalArgumentException("Burn duration must be finite and non-negative");
+        }
         if (!burning || !alive) {
             return;
         }
 
-        damage(30.0 * burnIntensity);
+        damage(SimulationRules.FUEL_DAMAGE_PER_SECOND * burnIntensity * seconds);
     }
 
     @Override

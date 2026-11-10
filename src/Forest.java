@@ -1,195 +1,117 @@
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 import java.util.Random;
+import java.util.stream.Stream;
 
 public class Forest {
-
-    private Cell[][] grid;
-
-    private double temperature;
-    private double rainfall;
-    private double aridity;
-
+    private final Cell[][] grid;
+    private final Random random;
     private Wind wind;
-
-    private Random random = new Random();
+    private final FireModel fireModel = new FireModel();
 
     public Forest(int rows, int columns) {
+        this(rows, columns, new BiomeForestGenerator(), new Random());
+    }
 
-        grid = new Cell[rows][columns];
-
-        temperature = 25.0;
-        rainfall = 0.2;
-        aridity = 0.5;
-
-        for (int row = 0; row < rows; row++) {
-
-            for (int col = 0; col < columns; col++) {
-
-                grid[row][col] = new Cell(row, col);
-
-                // 80% chance of there being a tree
-                if (random.nextDouble() < 0.8) {
-
-                    double spreadability =
-                            0.3 + random.nextDouble() * 0.7;
-
-                    grid[row][col].plantTree(
-                            new Tree(spreadability)
-                    );
-                }
-            }
+    public Forest(int rows, int columns, ForestGenerator generator, Random random) {
+        if (rows <= 0 || columns <= 0) {
+            throw new IllegalArgumentException("Forest dimensions must be positive");
         }
+        this.random = Objects.requireNonNull(random, "Random must not be null");
+        grid = Objects.requireNonNull(generator, "Generator must not be null")
+                .generate(rows, columns, random);
     }
 
-    public Cell[][] getGrid() {
-        return grid;
+    public Cell[][] getGrid() { return grid; }
+    public Stream<Cell> livingTrees() {
+        return Arrays.stream(grid).flatMap(Arrays::stream)
+                .filter(cell -> cell.hasTree() && cell.getTree().isAlive());
     }
-
     public void setWind(Wind wind) {
         this.wind = wind;
         wind.applyWind(this);
     }
+    public Wind getWind() { return wind; }
 
-    public Wind getWind() {
-        return wind;
-    }
-
+    // Retained for simple standalone uses; WorldSimulation coordinates the
+    // complete weather / fire / animal update using the same methods below.
     public void update() {
-
-        spreadFire();
-        advanceBurningTrees();
+        WorldSnapshot snapshot = new WorldSnapshot(this);
+        double x = wind == null ? 0.0 : switch (wind.getDirection()) {
+            case "EAST" -> 1.0; case "WEST" -> -1.0; default -> 0.0;
+        };
+        double y = wind == null ? 0.0 : switch (wind.getDirection()) {
+            case "SOUTH" -> 1.0; case "NORTH" -> -1.0; default -> 0.0;
+        };
+        applyHeat(fireModel.plan(snapshot, SimulationRules.STEP_SECONDS, x, y,
+                wind == null ? 0.0 : wind.getSpeed() / 100.0, false));
+        consumeFuel(snapshot, SimulationRules.STEP_SECONDS);
     }
 
-
-    private void advanceBurningTrees() {
-
+    public void advanceEnvironment(WeatherSystem weather, double time, double seconds) {
         for (Cell[] row : grid) {
-
             for (Cell cell : row) {
-
-                if (!cell.hasTree()) {
-                    continue;
-                }
-
-                Tree tree = cell.getTree();
-
-                if (tree.isBurning()) {
-                    tree.advanceBurning();
-                }
-
-                if (!tree.isAlive()) {
-                    cell.removeTree();
-                }
-            }
-        }
-    }
-
-    
-    private void spreadFire() {
-
-        boolean[][] igniteNext =
-                new boolean[grid.length][grid[0].length];
-
-        for (int row = 0; row < grid.length; row++) {
-
-            for (int col = 0; col < grid[row].length; col++) {
-
-                Cell cell = grid[row][col];
-
-                if (cell.hasTree() &&
-                    cell.getTree().isBurning()) {
-
-                    trySpread(row, col, row - 1, col, igniteNext);
-                    trySpread(row, col, row + 1, col, igniteNext);
-                    trySpread(row, col, row, col - 1, igniteNext);
-                    trySpread(row, col, row, col + 1, igniteNext);
-                    trySpread(row, col, row - 1, col - 1, igniteNext);
-                    trySpread(row, col, row - 1, col + 1, igniteNext);
-                    trySpread(row, col, row + 1, col - 1, igniteNext);
-                    trySpread(row, col, row + 1, col + 1, igniteNext);
-                }
-            }
-        }
-
-        // Ignite AFTER checking the entire grid
-        for (int row = 0; row < grid.length; row++) {
-
-            for (int col = 0; col < grid[row].length; col++) {
-
-                if (igniteNext[row][col]) {
-                    grid[row][col].getTree().ignite();
+                cell.advanceIgnitionProtection(seconds);
+                double rain = weather.rainAt(cell.getX(), cell.getY());
+                double evaporation = weather.isDrySpell(time) ? 0.014 : 0.003;
+                double baseline = cell.getBiome().getInitialMoisture();
+                double moisture = cell.getMoisture();
+                // Rain has a spatial moisture profile, rather than gradually
+                // saturating even its dry outer edge to 100%.
+                if (rain > 0.0) moisture = Math.max(moisture, rain);
+                else moisture = Math.max(baseline * 0.4, moisture - evaporation * seconds);
+                cell.setMoisture(moisture);
+                cell.setRainExposure(rain >= 0.55
+                        ? cell.getRainExposure() + rain * seconds
+                        : cell.getRainExposure() - seconds);
+                if (cell.hasTree() && cell.getTree().isBurning()
+                        && !cell.isIgnitionProtected()
+                        && cell.getRainExposure() >= 3.0) {
+                    cell.getTree().extinguish();
+                    cell.setHeat(0.0);
+                    cell.setRainExposure(0.0);
                 }
             }
         }
     }
 
-    private void trySpread(
-        int sourceRow,
-        int sourceCol,
-        int row,
-        int col,
-        boolean[][] igniteNext) {
-
-        if (row < 0 ||
-            row >= grid.length ||
-            col < 0 ||
-            col >= grid[0].length) {
-
-            return;
+    public void applyHeat(List<FireModel.HeatChange> changes) {
+        int columns = grid[0].length;
+        for (FireModel.HeatChange change : changes) {
+            Cell cell = grid[change.index() / columns][change.index() % columns];
+            if (!cell.hasTree() || cell.getTree().isBurning()) continue;
+            cell.setHeat(change.heat());
+            double threshold = SimulationRules.IGNITION_HEAT + cell.getMoisture() * 0.5;
+            if (cell.getHeat() >= threshold && cell.getMoisture() < 0.85) {
+                cell.getTree().ignite();
+                cell.setHeat(0.0);
+            }
         }
+    }
 
-        Cell target = grid[row][col];
-
-        if (!target.hasTree()) {
-            return;
-        }
-
-        if (target.getTree().isBurning()) {
-            return;
-        }
-
-        double chance =
-                target.getTree().getSpreadability();
-
-        if (wind != null) {
-
-            chance += wind.getSpreadModifier(
-                    sourceCol,
-                    sourceRow,
-                    col,
-                    row
-            );
-}
-
-        chance += aridity * 0.2;
-
-        chance += (temperature / 100.0) * 0.2;
-
-        chance -= rainfall * 0.2;
-
-        chance = Math.max(0.0, Math.min(1.0, chance));
-
-        if (random.nextDouble() < chance) {
-            igniteNext[row][col] = true;
+    public void consumeFuel(WorldSnapshot before, double seconds) {
+        for (int index = 0; index < before.size(); index++) {
+            Cell cell = grid[index / before.columns()][index % before.columns()];
+            if (!cell.hasTree()) continue;
+            Tree tree = cell.getTree();
+            // A newly ignited tree begins consuming fuel on the next step.
+            if (before.burning(index) && tree.isBurning() && !cell.isIgnitionProtected()) {
+                tree.advanceBurning(seconds);
+            }
+            if (!tree.isAlive()) {
+                cell.removeTree();
+                cell.setScorched(true);
+                cell.setHeat(0.0);
+            }
         }
     }
 
     public void display() {
-
         for (Cell[] row : grid) {
-
             for (Cell cell : row) {
-
-                if (!cell.hasTree()) {
-                    System.out.print(". ");
-
-                } else if (cell.getTree().isBurning()) {
-                    System.out.print("X ");
-
-                } else {
-                    System.out.print("T ");
-                }
+                System.out.print(!cell.hasTree() ? ". " : cell.getTree().isBurning() ? "X " : "T ");
             }
-
             System.out.println();
         }
     }

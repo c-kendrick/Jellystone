@@ -11,6 +11,12 @@ public class IgnitionSourceTest {
         testRejectsInvalidSeverity();
         testRejectsInvalidSpreadability();
         testIgnitionSourcePolymorphism();
+        testArsonSearchesNearestSuitableTree();
+        testArsonReportsNoSuitableTree();
+        testLightningFindsSparseTargets();
+        testBackburningUsesNearestPopulatedRow();
+        testEmptyForestsReportFailure();
+        testInvalidCoordinates();
         
         System.out.println("All IgnitionSource tests passed.");
     }
@@ -44,6 +50,7 @@ public class IgnitionSourceTest {
     private static void testArsonDoesNotIgniteLowSpreadabilityTree() {
         Forest forest = new Forest(2, 2);
         forest.getGrid()[0][0].plantTree(new Tree(0.1));
+        forest.getGrid()[1][1].plantTree(new Tree(0.9));
 
         Arson arson = new Arson(0, 0);
         arson.ignite(forest);
@@ -114,6 +121,121 @@ public class IgnitionSourceTest {
                     "Backburning should ignite every tree in the selected row"
             );
         }
+        for (int col : crestColumns) {
+            check(!forest.getGrid()[0][col].getTree().isBurning(),
+                    "Backburning should preserve its initial wave pattern");
+        }
+    }
+
+    private static Forest emptyForest(int rows, int columns) {
+        Forest forest = new Forest(rows, columns);
+        for (Cell[] cells : forest.getGrid()) {
+            for (Cell cell : cells) {
+                cell.removeTree();
+            }
+        }
+        return forest;
+    }
+
+    private static void testArsonSearchesNearestSuitableTree() {
+        Forest forest = emptyForest(4, 4);
+        Tree unsuitable = new Tree(0.1);
+        Tree nearest = new Tree(0.9);
+        Tree farther = new Tree(0.9);
+        forest.getGrid()[0][0].plantTree(unsuitable);
+        forest.getGrid()[0][1].plantTree(nearest);
+        forest.getGrid()[3][3].plantTree(farther);
+
+        new Arson(0, 0).ignite(forest);
+        check(nearest.isBurning(), "Arson should find the nearest suitable tree");
+        check(!unsuitable.isBurning(), "Arson should respect its threshold");
+        check(!farther.isBurning(), "Arson should start only one fire");
+
+        Forest trailingEmptyCells = emptyForest(3, 1);
+        trailingEmptyCells.getGrid()[0][0].plantTree(new Tree(0.9));
+        new Arson(2, 0).ignite(trailingEmptyCells);
+        check(trailingEmptyCells.getGrid()[0][0].getTree().isBurning(),
+                "Arson should search safely from the final empty row");
+    }
+
+    private static void testArsonReportsNoSuitableTree() {
+        Forest forest = emptyForest(1, 1);
+        forest.getGrid()[0][0].plantTree(new Tree(0.1));
+        expectFailure(IllegalStateException.class,
+                () -> new Arson(0, 0).ignite(forest));
+    }
+
+    private static void testLightningFindsSparseTargets() {
+        Forest forest = emptyForest(50, 50);
+        Tree onlyTree = new Tree(0.1);
+        Cell target = forest.getGrid()[49][49];
+        target.plantTree(onlyTree);
+        Lightning lightning = new Lightning();
+
+        lightning.ignite(forest);
+        check(onlyTree.isBurning(), "Lightning should find a single tree in a sparse forest");
+        check(lightning.getLastStruckCell() == target,
+                "Lightning should retain its target for the display");
+
+        onlyTree.extinguish();
+        expectFailure(IllegalStateException.class, () -> lightning.ignite(forest));
+        Tree anotherTree = new Tree(0.9);
+        forest.getGrid()[0][0].plantTree(anotherTree);
+        lightning.ignite(forest);
+        check(anotherTree.isBurning(), "Lightning should choose a new target on reuse");
+    }
+
+    private static void testBackburningUsesNearestPopulatedRow() {
+        Forest forest = emptyForest(5, 1);
+        Tree nearest = new Tree(0.1);
+        Tree farther = new Tree(0.9);
+        forest.getGrid()[1][0].plantTree(nearest);
+        forest.getGrid()[4][0].plantTree(farther);
+
+        new Backburning(2).ignite(forest);
+        check(nearest.isBurning(), "Backburning should handle an empty selected row");
+        check(!farther.isBurning(), "Backburning should stay within one row");
+    }
+
+    private static void testEmptyForestsReportFailure() {
+        IgnitionSource[] sources = {
+                new Arson(0, 0), new Lightning(), new Backburning(0)
+        };
+        for (IgnitionSource source : sources) {
+            Forest forest = emptyForest(2, 2);
+            expectFailure(IllegalStateException.class, () -> source.ignite(forest));
+
+            Tree dead = new Tree(0.9);
+            dead.kill();
+            forest.getGrid()[0][0].plantTree(dead);
+            Tree alreadyBurning = new Tree(0.9);
+            alreadyBurning.ignite();
+            forest.getGrid()[1][1].plantTree(alreadyBurning);
+            expectFailure(IllegalStateException.class, () -> source.ignite(forest));
+        }
+    }
+
+    private static void testInvalidCoordinates() {
+        Forest forest = emptyForest(2, 2);
+        expectFailure(IllegalArgumentException.class,
+                () -> new Arson(-1, 0).ignite(forest));
+        expectFailure(IllegalArgumentException.class,
+                () -> new Arson(0, 2).ignite(forest));
+        expectFailure(IllegalArgumentException.class,
+                () -> new Backburning(2).ignite(forest));
+    }
+
+    private static void expectFailure(Class<? extends RuntimeException> type,
+                                      Runnable action) {
+        try {
+            action.run();
+        } catch (RuntimeException exception) {
+            check(type.isInstance(exception), "Unexpected failure: " + exception);
+            check(exception.getMessage() != null && !exception.getMessage().isEmpty(),
+                    "Failure should explain what happened");
+            return;
+        }
+        throw new AssertionError("Expected " + type.getSimpleName());
     }
 
 private static void testIgnitionSourcePolymorphism() {
