@@ -1,1 +1,3 @@
 jellystone-sync.git/
+*.class
+/out/

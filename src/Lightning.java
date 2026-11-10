@@ -1,12 +1,14 @@
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class Lightning extends IgnitionSource {
-    private Random random = new Random();
-    private List<Cell> struckCells = new ArrayList<>();
+
+    private final Random random = new Random();
+    private final Set<Cell> struckCells = new HashSet<>();
     private Cell lastStruckCell;
-    private static final int MAX_ATTEMPTS = 10;
 
     public Lightning() {
         super(0.8, 0.7);
@@ -15,29 +17,23 @@ public class Lightning extends IgnitionSource {
     public Cell getLastStruckCell() {
         return lastStruckCell;
     }
-    
+
+    @Override
     public void ignite(Forest forest) {
-        Cell[][] grid = forest.getGrid();
+        // Choose randomly from valid targets instead of trying random
+        // coordinates, which can repeatedly miss trees in a sparse forest.
+        List<Cell> candidates = availableTrees(forest)
+                .filter(cell -> !struckCells.contains(cell))
+                .collect(Collectors.toList());
 
-        for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            int row = random.nextInt(grid.length);
-            int col = random.nextInt(grid[0].length);
-            Cell cell = grid[row][col];
-
-            if (struckCells.contains(cell)) {
-                continue;
-            }
-            
-            if (cell.hasTree()) {
-                lastStruckCell = cell;
-                struckCells.add(cell);
-                cell.getTree().ignite(this.severity);
-                return;
-            }
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException(
+                    "Lightning found no unburnt living tree it has not struck before");
         }
 
-        throw new IllegalStateException(
-            "Lightning found no ignitable cell after " + MAX_ATTEMPTS + " attempts"
-        );
+        Cell target = candidates.get(random.nextInt(candidates.size()));
+        target.getTree().ignite(severity);
+        lastStruckCell = target;
+        struckCells.add(target);
     }
 }

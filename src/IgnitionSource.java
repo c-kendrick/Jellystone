@@ -1,3 +1,6 @@
+import java.util.Arrays;
+import java.util.stream.Stream;
+
 public abstract class IgnitionSource {
 
     protected double severity;
@@ -23,4 +26,16 @@ public abstract class IgnitionSource {
     }
 
     public abstract void ignite(Forest forest);
+
+    protected boolean canIgnite(Cell cell) {
+        return cell.hasTree()
+                && cell.getTree().isAlive()
+                && !cell.getTree().isBurning();
+    }
+
+    protected Stream<Cell> availableTrees(Forest forest) {
+        return Arrays.stream(forest.getGrid())
+                .flatMap(Arrays::stream)
+                .filter(this::canIgnite);
+    }
 }
