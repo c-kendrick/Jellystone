@@ -1,4 +1,11 @@
 import java.awt.*;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import javax.imageio.ImageIO;
 import javax.swing.*;
 
 public class ForestPanel extends JPanel {
@@ -18,13 +25,56 @@ public class ForestPanel extends JPanel {
         this.forest = forest;
         this.lightning = lightning;
 
-        System.out.println(new java.io.File("images/tree.png").exists());
-        System.out.println(new java.io.File("images/fire.png").exists());
-        System.out.println(new java.io.File("images/lightning.png").exists());
+        treeImage = loadImage("tree.png");
+        fireImage = loadImage("fire.png");
+        lightningImage = loadImage("lightning.png");
+    }
 
-        treeImage = new ImageIcon("images/tree.png").getImage();
-        fireImage = new ImageIcon("images/fire.png").getImage();
-        lightningImage = new ImageIcon("images/lightning.png").getImage();
+    private static Image loadImage(String fileName) {
+        try {
+            // Supports images included on the classpath or inside a JAR.
+            URL resource = ForestPanel.class.getResource("/images/" + fileName);
+            if (resource != null) {
+                return readImage(resource);
+            }
+
+            // Find the project images folder even when an IDE uses a nested
+            // output directory and Java starts outside the project folder.
+            Path location = Paths.get(ForestPanel.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            Path directory = Files.isDirectory(location)
+                    ? location : location.getParent();
+
+            while (directory != null) {
+                Path imagePath = directory.resolve("images").resolve(fileName);
+                if (Files.isRegularFile(imagePath)) {
+                    return readImage(imagePath.toUri().toURL());
+                }
+                directory = directory.getParent();
+            }
+
+            // Also supports IDEs that compile outside the project entirely.
+            Path imagePath = Paths.get("images", fileName);
+            if (Files.isRegularFile(imagePath)) {
+                return readImage(imagePath.toUri().toURL());
+            }
+        } catch (IOException | URISyntaxException exception) {
+            throw new IllegalStateException(
+                    "Could not load images/" + fileName, exception);
+        }
+
+        throw new IllegalStateException("Cannot find images/" + fileName
+                + ". Keep the images folder in the project, or include it"
+                + " on the runtime classpath. Working directory: "
+                + System.getProperty("user.dir"));
+    }
+
+    private static Image readImage(URL resource) throws IOException {
+        Image image = ImageIO.read(resource);
+        if (image == null) {
+            throw new IOException("Unsupported or corrupt image: " + resource);
+        }
+        return image;
     }
 
     @Override
